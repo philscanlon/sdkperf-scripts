@@ -1,0 +1,69 @@
+#!/bin/bash
+
+#define rates and sizes for this sweep - this will be less than the max and follow the 80% rule
+iterations=9
+sizes=( 50 100 200 300 500 1000 5000 10000 50000 )
+BW_in_Bytes=450000000
+rateMax=450000
+streams=16
+strmDur=60
+
+hosts=$HOSTCOUNT
+hostlist=($HOST1 $HOST2 $HOST3 $HOST4 $HOST5 $HOST6 $HOST7 $HOST8)
+cpuperhost=$(( $CPUPERHOST ))
+
+
+#The test will fire up 4 producers and consumers to provide 4 message streams with the aggregate rate
+#defined above
+
+#clear working files
+rm *.out
+rm *.err
+rm *.csv
+
+
+#Loop through the sizes and rates
+for (( i=0; i < $(( $iterations)) ; i++ ))
+do
+    expRate=$(( $BW_in_Bytes / ${sizes[i]} ))
+    if [ $expRate -gt $rateMax ];
+       then expRate=$rateMax;
+    fi  
+    pubRate=$(( $expRate / $streams ))
+    pubCount=$(( $pubRate * $strmDur ))
+ 
+    #start up a test pub/sub flow on the test hosts
+    #Loop through the hosts and CPUs deploying 1 client per CPU
+    for (( j=0; j < $(( $streams - 1 )) ; j++ ))
+    do   
+        hostidx=$(( $j % $hosts ))
+        hostloops=$(( $j / $hosts ))
+        thiscpu=$(( $hostloops % $cpuperhost ))
+        
+
+       #echo "ssh ${hostlist[$hostidx]} \"taskset -c $thiscpu ./sdkperf_c -cip=$SOLDATA1 -cu=$SOLCLIENT@$SOLVPN -tte=1 -nagle -ptl=\"$i/$j\" -stl=\"$i/$j\" -mn=$pubCount -msa=${sizes[i]} -mr=$pubRate\" >client_$j.out 2>client_$j.err &"
+       ssh ${hostlist[$hostidx]} "taskset -c $thiscpu ./sdkperf_c -cip=$SOLDATA1 -cu=$SOLCLIENT@$SOLVPN -tte=1 -nagle -ptl=\"$i/$j\" -stl=\"$i/$j\" -mn=$pubCount -msa=${sizes[i]} -mr=$pubRate" >client_$j.out 2>client_$j.err &
+
+    done
+
+    hostidx=$(( $j % $hosts ))
+    hostloops=$(( $j / $hosts ))
+    thiscpu=$(( $hostloops % $cpuperhost ))
+
+    #echo "ssh ${hostlist[$hostidx]} \"taskset -c $thiscpu ./sdkperf_c -cip=$SOLDATA1 -cu=$SOLCLIENT@$SOLVPN -tte=1 -nagle -ptl=\"$i/$j\" -stl=\'$i/$j\" -mn=$pubCount -msa=${sizes[i]} -mr=$pubRate\" >client_$j.out 2>client$j.err"
+    ssh ${hostlist[$hostidx]} "taskset -c $thiscpu ./sdkperf_c -cip=$SOLDATA1 -cu=$SOLCLIENT@$SOLVPN -tte=1 -nagle -ptl=\"$i/$j\" -stl=\"$i/$j\" -mn=$pubCount -msa=${sizes[i]} -mr=$pubRate" >client_$j.out 2>client$j.err
+
+    sleep 15
+
+    aggPublishRate=`cat client*.out | grep "publish rate" | sed -r 's/^.*= //g' | cut -d . -f 1 | awk '{for (i=1; i<=NF; i++) s=s+$i}; END{print s}'`
+    aggReceiveRate=`cat client*.out | grep "receive rate" | sed -r 's/^.*= //g' | cut -d . -f 1 | awk '{for (i=1; i<=NF; i++) s=s+$i}; END{print s}'`
+
+    allCPU=`cat client*.out | grep "CPU usage" | sed -r 's/^.*= //g' | cut -d . -f 1 | awk '{for (i=1; i<=NF; i++) s=s+$i}; END{print s}'`
+
+    echo ${sizes[i]},$aggPublishRate,$aggReceiveRate,$allCPU >> results.csv
+
+done
+
+
+cp results.csv ../../results/results_01_`date +%s`.csv
+

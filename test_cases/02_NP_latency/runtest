@@ -1,0 +1,69 @@
+#!/bin/bash
+
+#define rates and sizes for the latency sweep - this will be less than the max and follow the 80% rule
+iterationsSize=1
+sizes=(100)
+iterationsRate=8
+rates=(10000 20000 50000 100000 200000 500000 1000000 2000000)
+
+streams=6
+strmDur=30
+
+latRate=10000
+
+
+#clear working files
+rm *.out
+rm *.err
+rm *.csv
+
+
+#Loop through the sizes and rates
+for (( j=0; j < $(( $iterationsSize)) ; j++ ))
+do
+    for (( i=0; i < $(( $iterationsRate)) ; i++ ))
+    do
+        pubRate=$(( ${rates[i]} / $streams ))
+        pubCount=$(( $pubRate * $strmDur ))
+        latCount=$(( $latRate * $strmDur ))
+    
+        #start the latency probe @20k msgs/s - 10B payload
+        echo "taskset -c 5,7 ../../tools/sdkperf_c -cip=$SOLDATA1 -CU=$SOLCLIENT@$SOLVPN -psm -lat -lg=13 -lb=4096 -ptl=latency01_np -stl=latency01_np -mn=$latCount -msa=10 -mr=$latRate >clientLat.out 2>clientLat.err &"
+        taskset -c 5,7 ../../tools/sdkperf_c -cip=$SOLDATA1 -CU=$SOLCLIENT@$SOLVPN -psm -lat -lg=13 -lb=4096 -ptl=latency01_np -stl=latency01_np -mn=$latCount -msa=10 -mr=$latRate >clientLat.out 2>clientLat.err &
+
+
+        #start the background traffic
+
+        for (( x=0; x < $(( $streams - 1 )) ; x++ ))
+        do
+
+
+            #start up a test pub/sub flow on the test hosts
+            echo "ssh $HOST2 \"taskset -c 1,2,3,4,6 ./sdkperf_c -cip=$SOLDATA1 -CU=$SOLCLIENT@$SOLVPN -ptl=$x -stl=$x -mn=$pubCount -msa=${sizes[j]} -mr=$pubRate\" >client_$x.out 2>client_$x.err &"
+            ssh $HOST2 "taskset -c 1,2,3,4,6 ./sdkperf_c -cip=$SOLDATA1 -CU=$SOLCLIENT@$SOLVPN -ptl=$x -stl=$x -mn=$pubCount -msa=${sizes[j]} -mr=$pubRate" >client_$x.out 2>client_$x.err &
+
+        done
+
+        echo "ssh $HOST2 \"taskset -c 1,2,3,4,6 ./sdkperf_c -cip=$SOLDATA1 -CU=$SOLCLIENT@$SOLVPN -ptl=$x -stl=$x -mn=$pubCount -msa=${sizes[j]} -mr=$pubRate\" >client_$x.out 2>client_$x.err"
+        ssh $HOST2 "taskset -c 1.2.3.4.6 ./sdkperf_c -cip=$SOLDATA1 -CU=$SOLCLIENT@$SOLVPN -ptl=$x -stl=$x -mn=$pubCount -msa=${sizes[j]} -mr=$pubRate" >client_$x.out 2>client_$x.err
+        
+        aggPublishRate=`cat client*.out | grep "publish rate" | sed -r 's/^.*= //g' | cut -d . -f 1 | awk '{for (i=1; i<=NF; i++) s=s+$i}; END{print s}'`
+        aggReceiveRate=`cat client*.out | grep "receive rate" | sed -r 's/^.*= //g' | cut -d . -f 1 | awk '{for (i=1; i<=NF; i++) s=s+$i}; END{print s}'`
+        latAverage=`cat clientLat.out | grep "Average" | sed -r "s/.* = //g" | sed -r "s/ us//g"`
+        lat99=`cat clientLat.out | grep "99th" | sed -r "s/.* = //g" | sed -r "s/ us//g"`
+        latStdDev=`cat clientLat.out | grep "Deviation" | sed -r "s/.* = //g" | sed -r "s/ us//g"`
+
+        latCPU=`cat clientLat.out | grep "CPU usage" | sed -r 's/^.*= //g' | cut -d . -f 1 | awk '{for (i=1; i<=NF; i++) s=s+$i}; END{print s}'`
+        allCPU=`cat client*.out | grep "CPU usage" | sed -r 's/^.*= //g' | cut -d . -f 1 | awk '{for (i=1; i<=NF; i++) s=s+$i}; END{print s}'`
+        #pubSubCPU=$(( $allCPU - $latCPU  ))
+
+        echo ${sizes[j]},$aggPublishRate,$aggReceiveRate,$latAverage,$lat99,$latStdDev,$pubSubCPU,$latCPU >> results.csv
+
+        sleep 5
+
+    done
+done
+
+
+cp results.csv ../../results/results_02`date +%s`.csv
+

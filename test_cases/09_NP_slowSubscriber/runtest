@@ -1,0 +1,63 @@
+#!/bin/bash
+
+#define rates and sizes for the latency sweep - this will be less than the max and follow the 80% rule
+iterationsSize=1
+sizes=(100)
+iterationsSubDelay=4
+slowSubDelay=(0 1 10 100)
+
+strmDur=60
+myTimer=$strmDur
+latRate=100000
+
+#The test will fire up 1 producer and  x consumers to provide a 1:x fanout with an aggregate egress rate
+#defined above
+
+#clear working files
+rm *.out
+rm *.err
+rm *.csv
+
+
+#Loop through the sizes and rates
+for (( j=0; j < $(( $iterationsSize)) ; j++ ))
+do
+    for (( i=0; i < $(( $iterationsSubDelay)) ; i++ ))
+    do
+
+        latCount=$(( $strmDur * $latRate ))
+
+        #start up a test sub flow on the test hosts
+        ssh $HOST2 "./sdkperf_c -cip=$SOLDATA1 -CU=$SOLCLIENT@$SOLVPN -ptl=dummy -mr=1 -mn=$myTimer -sd=${slowSubDelay[i]} -stl=latency05_np_$i" >client1.out 2>client1.err &
+
+        #start the latency probe
+        ssh $HOST1 "taskset -c 5,7 ./sdkperf_c -cip=$SOLDATA1 -CU=$SOLCLIENT@$SOLVPN -mt=persistent -tte=1 -psm -lat -lb=4096 -lg=14  -ptl=latency05_np_$i -stl=latency05_np_$i -mn=$latCount -msa=${sizes[j]} -mr=$latRate" >clientLat.out 2>clientLat.err 
+
+
+        sleep 5 #ensure all messages are received and counted
+
+        aggPublishRate=`cat client*.out | grep "publish rate" | sed -r 's/^.*= //g' | cut -d . -f 1 | awk '{for (i=1; i<=NF; i++) s=s+$i}; END{print s}'`
+        aggReceiveRate=`cat client*.out | grep "receive rate" | sed -r 's/^.*= //g' | cut -d . -f 1 | awk '{for (i=1; i<=NF; i++) s=s+$i}; END{print s}'`
+        latAverage=`cat clientLat.out | grep "Average" | sed -r "s/.* = //g" | sed -r "s/ us//g"`
+        lat999=`cat clientLat.out | grep "99.9th" | sed -r "s/.* = //g" | sed -r "s/ us//g"`
+        latStdDev=`cat clientLat.out | grep "Deviation" | sed -r "s/.* = //g" | sed -r "s/ us//g"`
+        pubMsgCount=`cat clientLat.out | grep "Total Messages transmitted" | sed -r 's/^.*= //g' | cut -d . -f 1 | awk '{for (i=1; i<=NF; i++) s=s+$i}; END{print s}'`
+        recMsgCount=`cat clientLat.out | grep "Total Messages received" | sed -r 's/^.*= //g' | cut -d . -f 1 | awk '{for (i=1; i<=NF; i++) s=s+$i}; END{print s}'`
+        slowRecMsgCount=`cat client1.out | grep "Total Messages received" | sed -r 's/^.*= //g' | cut -d . -f 1 | awk '{for (i=1; i<=NF; i++) s=s+$i}; END{print s}'`
+        slowDICount=`cat client1.out | grep "discard indication" | sed -r 's/^.*= //g' | cut -d . -f 1 | awk '{for (i=1; i<=NF; i++) s=s+$i}; END{print s}'`
+
+
+        latCPU=`cat clientLat.out | grep "CPU usage" | sed -r 's/^.*= //g' | cut -d . -f 1 | awk '{for (i=1; i<=NF; i++) s=s+$i}; END{print s}'`
+        allCPU=`cat client*.out | grep "CPU usage" | sed -r 's/^.*= //g' | cut -d . -f 1 | awk '{for (i=1; i<=NF; i++) s=s+$i}; END{print s}'`
+        pubSubCPU=100 #$$(( $allCPU - $latCPU  ))
+
+        echo ${slowSubDelay[i]},${sizes[j]},$aggPublishRate,$aggReceiveRate,$latAverage,$lat999,$latStdDev,$pubSubCPU,$latCPU,$pubMsgCount,$recMsgCount,$slowRecMsgCount,$slowDICount >> results.csv
+
+        sleep 5
+
+    done
+done
+
+
+cp results.csv ../../results/results_08_`date +%s`.csv
+

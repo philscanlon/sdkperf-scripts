@@ -1,0 +1,104 @@
+#!/bin/bash
+
+#define rates and sizes for the latency sweep - this will be less than the max and follow the 80% rule
+size=600
+testRunInSec=860
+statsInterval=10
+clientCount=20
+pubRate=1000
+publisherCount=$(( $testRunInSec * pubRate * $clientCount ))
+timeB4Fail=90
+time4Recovery=240
+
+
+consSet1Q="T10_Q000,T10_Q001,T10_Q002,T10_Q003,T10_Q004,T10_Q005,T10_Q006,T10_Q007,T10_Q008,T10_Q009,T10_Q010,T10_Q011,T10_Q012,T10_Q013,T10_Q014,T10_Q015,T10_Q016,T10_Q017,T10_Q018,T10_Q019"
+consSet2Q="T10_Q100,T10_Q101,T10_Q102,T10_Q103,T10_Q104,T10_Q105,T10_Q106,T10_Q107,T10_Q108,T10_Q109,T10_Q110,T10_Q111,T10_Q112,T10_Q113,T10_Q114,T10_Q115,T10_Q116,T10_Q117,T10_Q118,T10_Q119"
+consSet3Q="T10_Q200,T10_Q201,T10_Q202,T10_Q203,T10_Q204,T10_Q205,T10_Q206,T10_Q207,T10_Q208,T10_Q209,T10_Q210,T10_Q211,T10_Q212,T10_Q213,T10_Q214,T10_Q215,T10_Q216,T10_Q217,T10_Q218,T10_Q219"
+
+
+latencyRate=500
+latencyCount=$(( 60 * $latencyRate ))
+
+
+#clear working files
+rm *.out
+rm *.err
+rm *.csv
+
+
+#This is a linear run test
+#Start the starts gathering script - stats every 10s for 70 iterations
+$POC_SCRIPTS/getClientStats.pl $SOLMGT1 $(( $testRunInSec / $statsInterval ))  $statsInterval > stats.out 2> stats.err &
+
+#Start the long running subscribers (timed by 1 msg/s np) 600s		- T  0
+ssh  $HOST2 "taskset -c 0-7 ./sdkperf_c -cip=$SOLDATA1 -CU=$SOLCLIENT@$SOLVPN -ptl=dummy -mn=$(( $testRunInSec * $clientCount )) -mr=1 -msa=1 -sql=$consSet1Q -pe -cc=$clientCount" >client1.out 2>client1.err &
+ssh  $HOST3 "taskset -c 0-7 ./sdkperf_c -cip=$SOLDATA1 -CU=$SOLCLIENT@$SOLVPN -ptl=dummy -mn=$(( $testRunInSec * $clientCount )) -mr=1 -msa=1 -sql=$consSet2Q -pe -cc=$clientCount" >client2.out 2>client2.err &
+
+#Start the short running subscribers (timed) 90s			- T  0
+ssh  $HOST4 "taskset -c 0-7 ./sdkperf_c -cip=$SOLDATA1 -CU=$SOLCLIENT@$SOLVPN -ptl=dummy -mn=$(( $timeB4Fail * $clientCount )) -mr=1 -msa=1 -sql=$consSet3Q -pe -nsr -cc=$clientCount" >client3.out 2>client3.err &
+
+#Sleep then Start the long running publishers				- T  5
+sleep 5
+ssh  $HOST3 "taskset -c 0-7 ./sdkperf_c -cip=$SOLDATA1 -CU=$SOLCLIENT@$SOLVPN -mn=$publisherCount -mr=$pubRate -msa=$size -pql=$consSet1Q -cc=$clientCount" >client4.out 2>client4.err &
+ssh  $HOST3 "taskset -c 0-7 ./sdkperf_c -cip=$SOLDATA1 -CU=$SOLCLIENT@$SOLVPN -mn=$publisherCount -mr=$pubRate -msa=$size -pql=$consSet2Q -cc=$clientCount" >client5.out 2>client5.err &
+ssh  $HOST3 "taskset -c 0-7 ./sdkperf_c -cip=$SOLDATA1 -CU=$SOLCLIENT@$SOLVPN -mn=$publisherCount -mr=$pubRate -msa=$size -pql=$consSet3Q -cc=$clientCount" >client6.out 2>client6.err &
+
+#sleep to allow start up and traffic stabelisation			- T 15
+sleep 10
+
+#Run latency probe (1) for 60s						- T 75
+ssh  $HOST3 "taskset -c 0-7 ./sdkperf_c -cip=$SOLDATA1 -CU=$SOLCLIENT@$SOLVPN -mr=$latencyRate -mn=$latencyCount -lb=4096 -lg=14 -msa=10 -ptl=LatTest10 -stl=LatTest10 -tte=1 -psm -lat" >clientLat1.out 2>clientLat1.err
+
+#Sleep to allow timed subs to finish and spool to fill			- T225
+sleep 180
+
+#Start latency probe (2) for 60s					- T265
+ssh  $HOST3 "taskset -c 0-7 ./sdkperf_c -cip=$SOLDATA1 -CU=$SOLCLIENT@$SOLVPN -mr=$latencyRate -mn=$latencyCount -lb=4096 -lg=14 -msa=10 -ptl=LatTest10 -stl=LatTest10 -tte=1 -psm -lat" >clientLat2.out 2>clientLat2.err
+
+#sleep to allow spool to fill (60s)					- T385
+sleep 300
+
+#restart the failed clients and allow to recover (240s)			- T625   Note - no -nsr so queues will be removed
+ssh  $HOST4 "taskset -c 0-7 ./sdkperf_c -cip=$SOLDATA1 -CU=$SOLCLIENT@$SOLVPN -ptl=dummy -mn=$(( $time4Recovery * $clientCount )) -mr=1 -msa=1 -sql=$consSet3Q -pe -cc=$clientCount" >client7.out 2>client7.err &
+
+#short sleep while clients restart					- T395
+sleep 15
+
+#start the latency probe (3) for 60s					- T455
+ssh  $HOST3 "taskset -c 0-7 ./sdkperf_c -cip=$SOLDATA1 -CU=$SOLCLIENT@$SOLVPN -mr=$latencyRate -mn=$latencyCount -lb=4096 -lg=14 -msa=10 -ptl=LatTest10 -stl=LatTest10 -tte=1 -psm -lat" >clientLat3.out 2>clientLat3.err
+
+#sleep until catchup							- T485
+sleep 60
+
+#run latency sweep again						- T545
+ssh  $HOST3 "taskset -c 0-7 ./sdkperf_c -cip=$SOLDATA1 -CU=$SOLCLIENT@$SOLVPN -mr=$latencyRate -mn=$latencyCount -lb=4096 -lg=14 -msa=10 -ptl=LatTest10 -stl=LatTest10 -tte=1 -psm -lat" >clientLat4.out 2>clientLat4.err
+
+#sleep until end
+sleep 30
+
+#Tidy up								- T565s
+
+   lat999=`cat clientLat1.out | grep "99.9th" | sed -r "s/.* = //g" | sed -r "s/ us//g"`
+   latAverage=`cat clientLat1.out | grep "Average" | sed -r "s/.* = //g" | sed -r "s/ us//g"`
+   #Manually add the time from calc - should automate
+   echo 50,$latAverage,$lat999 >> resultsLat.csv
+
+   lat999=`cat clientLat2.out | grep "99.9th" | sed -r "s/.* = //g" | sed -r "s/ us//g"`
+   latAverage=`cat clientLat2.out | grep "Average" | sed -r "s/.* = //g" | sed -r "s/ us//g"`
+   #Manually add the time from calc - should automate
+   echo 290,$latAverage,$lat999 >> resultsLat.csv
+
+   lat999=`cat clientLat3.out | grep "99.9th" | sed -r "s/.* = //g" | sed -r "s/ us//g"`
+   latAverage=`cat clientLat3.out | grep "Average" | sed -r "s/.* = //g" | sed -r "s/ us//g"`
+   #Manually add the time from calc - should automate
+   echo 650,$latAverage,$lat999 >> resultsLat.csv
+
+   lat999=`cat clientLat4.out | grep "99.9th" | sed -r "s/.* = //g" | sed -r "s/ us//g"`
+   latAverage=`cat clientLat4.out | grep "Average" | sed -r "s/.* = //g" | sed -r "s/ us//g"`
+   #Manually add the time from calc - should automate
+   echo 790,$latAverage,$lat999 >> resultsLat.csv
+
+
+cp resultsLat.csv ../../results/resultsLat_10_`date +%s`.csv
+cp stats.out ../../results/resultsRate_10_`date +%s`.csv
+

@@ -1,0 +1,35 @@
+#This file holds all environment vars for the testing
+
+
+#PoC HOME Directory
+export POC_HOME=$PWD
+
+#PoC Directories
+export POC_BIN=$POC_HOME/bin
+export POC_DATA=$POC_HOME/data
+export POC_TOOLS=$POC_HOME/tools
+export POC_SCRIPTS=$POC_HOME/scripts
+
+#Test Hosts
+export HOST1=192.168.130.81
+export HOST2=192.168.130.82
+export HOST3=192.168.130.81
+export HOST4=192.168.130.82
+export HOST5=
+export HOST6=
+
+
+#Solace mgmt
+#export SOLMGT1=192.168.130.80
+export SOLMGT1=192.168.130.80
+export SOLMGT2=192.168.2.80
+
+
+#Solace Data
+#export SOLDATA1=192.168.168.180
+export SOLDATA1=10.10.10.180
+export SOLDATA2=10.10.10.190 
+
+#Solace Client-username and VPN
+export SOLCLIENT=mat
+export SOLVPN=mat

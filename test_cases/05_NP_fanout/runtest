@@ -1,0 +1,66 @@
+#!/bin/bash
+
+#define rates and sizes for the latency sweep - this will be less than the max and follow the 80% rule
+iterationsSize=1
+sizes=(100)
+#fan-out values (in multiples of 4)
+iterationsFanOut=7
+fanout=(4 12 20 40 60 80 100)
+targetEgressRate=2500000      #This will be the approximate egress rate for all tests
+
+strmDur=30
+myTimer=$strmDur
+latRate=10000
+
+#The test will fire up 1 producer and  x consumers to provide a 1:x fanout with an aggregate egress rate
+#defined above
+
+#clear working files
+rm *.out
+rm *.err
+rm *.csv
+
+
+#Loop through the sizes and rates
+for (( j=0; j < $(( $iterationsSize)) ; j++ ))
+do
+    for (( i=0; i < $(( $iterationsFanOut)) ; i++ ))
+    do
+        pubRate=$(( $targetEgressRate / ${fanout[i]} ))
+        clientCount=$(( ${fanout[i]} / 4 ))
+        pubCount=$(( $pubRate * $strmDur ))
+        latCount=$(( $latRate * $strmDur ))
+        
+    
+        #start the latency probe @20k msgs/s - 10B payload
+        taskset -c 5,7 ../../tools/sdkperf_c -cip=$SOLDATA1 -CU=$SOLCLIENT@$SOLVPN -psm -lat -lb=4096 -lg=12  -ptl=latency05_np -stl=latency05_np -mn=$latCount -msa=10 -mr=$latRate >clientLat.out 2>clientLat.err &
+
+        #start up a test pub/sub flow on the test hosts
+        ssh $HOST2 "taskset -c 0-7 ./sdkperf_c -cip=$SOLDATA1 -CU=$SOLCLIENT@$SOLVPN -ptl=dummy -mn=$(( $myTimer * $clientCount )) -mr=1 -msa=0 -stl=test05_np -cc=$clientCount" >client1.out 2>client1.err &
+        ssh $HOST2 "taskset -c 0-7 ./sdkperf_c -cip=$SOLDATA1 -CU=$SOLCLIENT@$SOLVPN -ptl=dummy -mn=$(( $myTimer * $clientCount )) -mr=1 -msa=0 -stl=test05_np -cc=$clientCount" >client2.out 2>client2.err &
+        ssh $HOST2 "taskset -c 0-7 ./sdkperf_c -cip=$SOLDATA1 -CU=$SOLCLIENT@$SOLVPN -ptl=dummy -mn=$(( $myTimer * $clientCount )) -mr=1 -msa=0 -stl=test05_np -cc=$clientCount" >client3.out 2>client3.err &
+        ssh $HOST2 "taskset -c 0-7 ./sdkperf_c -cip=$SOLDATA1 -CU=$SOLCLIENT@$SOLVPN -ptl=dummy -mn=$(( $myTimer * $clientCount )) -mr=1 -msa=0 -stl=test05_np -cc=$clientCount" >client4.out 2>client4.err &
+        ssh $HOST2 "taskset -c 0-7 ./sdkperf_c -cip=$SOLDATA1 -CU=$SOLCLIENT@$SOLVPN -ptl=test05_np -mn=$pubCount -msa=${sizes[j]} -mr=$pubRate" >client5.out 2>client5.err 
+
+        sleep 5 #ensure all messages are received and counted
+
+        aggPublishRate=`cat client*.out | grep "publish rate" | sed -r 's/^.*= //g' | cut -d . -f 1 | awk '{for (i=1; i<=NF; i++) s=s+$i}; END{print s}'`
+        aggReceiveRate=`cat client*.out | grep "receive rate" | sed -r 's/^.*= //g' | cut -d . -f 1 | awk '{for (i=1; i<=NF; i++) s=s+$i}; END{print s}'`
+        latAverage=`cat clientLat.out | grep "Average" | sed -r "s/.* = //g" | sed -r "s/ us//g"`
+        lat999=`cat clientLat.out | grep "99.9th" | sed -r "s/.* = //g" | sed -r "s/ us//g"`
+        latStdDev=`cat clientLat.out | grep "Deviation" | sed -r "s/.* = //g" | sed -r "s/ us//g"`
+
+        latCPU=`cat clientLat.out | grep "CPU usage" | sed -r 's/^.*= //g' | cut -d . -f 1 | awk '{for (i=1; i<=NF; i++) s=s+$i}; END{print s}'`
+        allCPU=`cat client*.out | grep "CPU usage" | sed -r 's/^.*= //g' | cut -d . -f 1 | awk '{for (i=1; i<=NF; i++) s=s+$i}; END{print s}'`
+        pubSubCPU=$(( $allCPU - $latCPU  ))
+
+        echo ${fanout[i]},${sizes[j]},$aggPublishRate,$aggReceiveRate,$latAverage,$lat999,$latStdDev,$pubSubCPU,$latCPU >> results.csv
+
+        sleep 5
+
+    done
+done
+
+
+cp results.csv ../../results/results_05_`date +%s`.csv
+

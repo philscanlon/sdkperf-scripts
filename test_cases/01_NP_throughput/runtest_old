@@ -1,0 +1,63 @@
+#!/bin/bash
+
+#define rates and sizes for this sweep - this will be less than the max and follow the 80% rule
+iterations=8
+sizes=(100 500 1000 5000 10000 50000 100000 500000)
+#rates=(5000000 1000000 800000 80000 40000 8000 4000 800)
+
+BW_in_Bytes=900000000
+rateMax=2000000
+streams=16
+strmDur=30
+
+#The test will fire up 4 producers and consumers to provide 4 message streams with the aggregate rate
+#defined above
+
+#clear working files
+rm *.out
+rm *.err
+rm *.csv
+
+
+#Loop through the sizes and rates
+for (( i=0; i < $(( $iterations)) ; i++ ))
+do
+    expRate=$(( $BW_in_Bytes / ${sizes[i]} ))
+    if [ $expRate -gt $rateMax ];
+       then expRate=$rateMax;
+    fi  
+    pubRate=$(( $expRate / $streams ))
+    pubCount=$(( $pubRate * $strmDur ))
+    
+    #start up a test pub/sub flow on the test hosts
+    ssh $HOST1 "./sdkperf_c -cip=$SOLDATA1 -CU=$SOLCLIENT@$SOLVPN -psv=20 -nagle -ptl=test01_np -stl=test01_np -mn=$pubCount -msa=${sizes[i]} -mr=$pubRate" >client1.out 2>client1.err &
+    ssh $HOST2 "./sdkperf_c -cip=$SOLDATA1 -CU=$SOLCLIENT@$SOLVPN -psv=20 -nagle -ptl=test02_np -stl=test02_np -mn=$pubCount -msa=${sizes[i]} -mr=$pubRate" >client2.out 2>client2.err &
+    ssh $HOST1 "./sdkperf_c -cip=$SOLDATA1 -CU=$SOLCLIENT@$SOLVPN -psv=20 -nagle -ptl=test03_np -stl=test03_np -mn=$pubCount -msa=${sizes[i]} -mr=$pubRate" >client3.out 2>client3.err &
+    ssh $HOST2 "./sdkperf_c -cip=$SOLDATA1 -CU=$SOLCLIENT@$SOLVPN -psv=20 -nagle -ptl=test04_np -stl=test04_np -mn=$pubCount -msa=${sizes[i]} -mr=$pubRate" >client4.out 2>client4.err &
+    ssh $HOST1 "./sdkperf_c -cip=$SOLDATA1 -CU=$SOLCLIENT@$SOLVPN -psv=20 -nagle -ptl=test05_np -stl=test05_np -mn=$pubCount -msa=${sizes[i]} -mr=$pubRate" >client5.out 2>client5.err &
+    ssh $HOST2 "./sdkperf_c -cip=$SOLDATA1 -CU=$SOLCLIENT@$SOLVPN -psv=20 -nagle -ptl=test06_np -stl=test06_np -mn=$pubCount -msa=${sizes[i]} -mr=$pubRate" >client6.out 2>client6.err &
+    ssh $HOST1 "./sdkperf_c -cip=$SOLDATA1 -CU=$SOLCLIENT@$SOLVPN -psv=20 -nagle -ptl=test07_np -stl=test07_np -mn=$pubCount -msa=${sizes[i]} -mr=$pubRate" >client7.out 2>client7.err &
+    ssh $HOST2 "./sdkperf_c -cip=$SOLDATA1 -CU=$SOLCLIENT@$SOLVPN -psv=20 -nagle -ptl=test08_np -stl=test08_np -mn=$pubCount -msa=${sizes[i]} -mr=$pubRate" >client8.out 2>client8.err &
+    ssh $HOST1 "./sdkperf_c -cip=$SOLDATA1 -CU=$SOLCLIENT@$SOLVPN -psv=20 -nagle -ptl=test11_np -stl=test11_np -mn=$pubCount -msa=${sizes[i]} -mr=$pubRate" >client9.out 2>client9.err &
+    ssh $HOST2 "./sdkperf_c -cip=$SOLDATA1 -CU=$SOLCLIENT@$SOLVPN -psv=20 -nagle -ptl=test12_np -stl=test12_np -mn=$pubCount -msa=${sizes[i]} -mr=$pubRate" >client10.out 2>client10.err &
+    ssh $HOST1 "./sdkperf_c -cip=$SOLDATA1 -CU=$SOLCLIENT@$SOLVPN -psv=20 -nagle -ptl=test13_np -stl=test13_np -mn=$pubCount -msa=${sizes[i]} -mr=$pubRate" >client11.out 2>client11.err &
+    ssh $HOST2 "./sdkperf_c -cip=$SOLDATA1 -CU=$SOLCLIENT@$SOLVPN -psv=20 -nagle -ptl=test14_np -stl=test14_np -mn=$pubCount -msa=${sizes[i]} -mr=$pubRate" >client12.out 2>client12.err &
+    ssh $HOST1 "./sdkperf_c -cip=$SOLDATA1 -CU=$SOLCLIENT@$SOLVPN -psv=20 -nagle -ptl=test15_np -stl=test15_np -mn=$pubCount -msa=${sizes[i]} -mr=$pubRate" >client13.out 2>client13.err &
+    ssh $HOST2 "./sdkperf_c -cip=$SOLDATA1 -CU=$SOLCLIENT@$SOLVPN -psv=20 -nagle -ptl=test16_np -stl=test16_np -mn=$pubCount -msa=${sizes[i]} -mr=$pubRate" >client14.out 2>client14.err &
+    ssh $HOST1 "./sdkperf_c -cip=$SOLDATA1 -CU=$SOLCLIENT@$SOLVPN -psv=20 -nagle -ptl=test17_np -stl=test17_np -mn=$pubCount -msa=${sizes[i]} -mr=$pubRate" >client15.out 2>client15.err &
+    ssh $HOST2 "./sdkperf_c -cip=$SOLDATA1 -CU=$SOLCLIENT@$SOLVPN -psv=20 -nagle -ptl=test18_np -stl=test18_np -mn=$pubCount -msa=${sizes[i]} -mr=$pubRate" >client16.out 2>client16.err 
+
+    sleep 5
+
+    aggPublishRate=`cat client*.out | grep "publish rate" | sed -r 's/^.*= //g' | cut -d . -f 1 | awk '{for (i=1; i<=NF; i++) s=s+$i}; END{print s}'`
+    aggReceiveRate=`cat client*.out | grep "receive rate" | sed -r 's/^.*= //g' | cut -d . -f 1 | awk '{for (i=1; i<=NF; i++) s=s+$i}; END{print s}'`
+
+    allCPU=`cat client*.out | grep "CPU usage" | sed -r 's/^.*= //g' | cut -d . -f 1 | awk '{for (i=1; i<=NF; i++) s=s+$i}; END{print s}'`
+
+    echo ${sizes[i]},$aggPublishRate,$aggReceiveRate,$allCPU >> results.csv
+
+done
+
+
+cp results.csv ../../results/results_01_`date +%s`.csv
+
