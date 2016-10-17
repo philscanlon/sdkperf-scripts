@@ -43,6 +43,9 @@ do
 
 
        #echo "ssh ${hostlist[$hostidx]} \"taskset -c $thiscpu ./sdkperf_c -cip=$SOLDATA1 -cu=$SOLCLIENT@$SOLVPN  -nagle -ptl=\"$i/$j\" -stl=\"$i/$j\" -mn=$pubCount -msa=${sizes[i]} -mr=$pubRate\" >client_$j.out 2>client_$j.err &"
+       #
+       # removed SSH for testing on single test host machine
+       #
        #ssh ${hostlist[$hostidx]} "taskset -c $thiscpu ./sdkperf_c -cip=$SOLDATA1 -cu=$SOLCLIENT@$SOLVPN  -nagle -ptl=\"$i/$j\" -stl=\"$i/$j\" -mn=$pubCount -msa=${sizes[i]} -mr=$pubRate" >client_$j.out 2>client_$j.err &
        taskset -c $thiscpu ./sdkperf_c -cip=$SOLDATA1 -cu=$SOLCLIENT@$SOLVPN  -nagle -ptl=\"$i/$j\" -stl=\"$i/$j\" -mn=$pubCount -msa=${sizes[i]} -mr=$pubRate >client_$j.out 2>client_$j.err &
 
